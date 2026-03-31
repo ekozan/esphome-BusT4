@@ -11,17 +11,58 @@ namespace esphome::bus_t4 {
 static const char *TAG = "bus_t4";
 
 void BusT4Component::setup() {
+  // Create RX queue first with null check
   rxQueue_ = xQueueCreate(32, sizeof(T4Packet));
+  if (rxQueue_ == nullptr) {
+    ESP_LOGE(TAG, "Failed to create RX queue!");
+    return;
+  }
+  ESP_LOGD(TAG, "RX queue created successfully");
+
+  // Create TX queue
   txQueue_ = xQueueCreate(32, sizeof(T4Packet));
+  if (txQueue_ == nullptr) {
+    ESP_LOGE(TAG, "Failed to create TX queue!");
+    vQueueDelete(rxQueue_);
+    rxQueue_ = nullptr;
+    return;
+  }
+  ESP_LOGD(TAG, "TX queue created successfully");
 
+  // Create event group for request handling
   requestEvent_ = xEventGroupCreate();
-  xEventGroupSetBits(requestEvent_, EB_REQUEST_FREE);
+  if (requestEvent_ != nullptr) {
+    xEventGroupSetBits(requestEvent_, EB_REQUEST_FREE);
+    ESP_LOGD(TAG, "Event group created successfully");
+  } else {
+    ESP_LOGW(TAG, "Failed to create event group");
+  }
 
-  xTaskCreate(rxTaskThunk, "bus_t4_rx", 8192, this, 10, &rxTask_);
-  xTaskCreate(txTaskThunk, "bus_t4_tx", 8192, this, 10, &txTask_);
+  // Create RX task with error checking
+  BaseType_t rx_result = xTaskCreate(rxTaskThunk, "bus_t4_rx", 8192, this, 10, &rxTask_);
+  if (rx_result != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create RX task!");
+    return;
+  }
+  ESP_LOGD(TAG, "RX task created");
+
+  // Create TX task with error checking
+  BaseType_t tx_result = xTaskCreate(txTaskThunk, "bus_t4_tx", 8192, this, 10, &txTask_);
+  if (tx_result != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create TX task!");
+    return;
+  }
+  ESP_LOGD(TAG, "TX task created");
+
+  ESP_LOGI(TAG, "BusT4 component setup complete");
 }
 
 void BusT4Component::loop() {
+  // Safety check: ensure queue exists
+  if (rxQueue_ == nullptr) {
+    return;
+  }
+
   // Process received packets and dispatch to registered devices
   T4Packet packet;
   while (xQueueReceive(rxQueue_, &packet, 0)) {
@@ -30,9 +71,6 @@ void BusT4Component::loop() {
       ESP_LOGV(TAG, "Ignoring TX echo");
       continue;
     }
-
-    // Ignore packets addressed TO ourselves that we sent (broadcast responses come TO us)
-    // But accept packets where TO matches our address (responses to our requests)
 
     // Dispatch to all registered devices
     for (auto *device : devices_) {
@@ -44,6 +82,10 @@ void BusT4Component::loop() {
 void BusT4Component::dump_config() {
   ESP_LOGCONFIG(TAG, "BusT4:");
   ESP_LOGCONFIG(TAG, "  Address: 0x%02X%02X", address_.address, address_.endpoint);
+  ESP_LOGCONFIG(TAG, "  RX Queue: %s", rxQueue_ != nullptr ? "OK" : "FAILED");
+  ESP_LOGCONFIG(TAG, "  TX Queue: %s", txQueue_ != nullptr ? "OK" : "FAILED");
+  ESP_LOGCONFIG(TAG, "  RX Task: %s", rxTask_ != nullptr ? "RUNNING" : "STOPPED");
+  ESP_LOGCONFIG(TAG, "  TX Task: %s", txTask_ != nullptr ? "RUNNING" : "STOPPED");
 }
 
 void BusT4Component::rxTask() {
@@ -54,7 +96,15 @@ void BusT4Component::rxTask() {
   // Internal checksums are within the DATA portion.
   enum { WAIT_SYNC = 0, SIZE, DATA, TRAILING_SIZE } rx_state = WAIT_SYNC;
 
+  ESP_LOGI(TAG, "RX task started");
+
   for (;;) {
+    // Safety check: ensure parent and queue exist
+    if (!parent_ || rxQueue_ == nullptr) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+
     uint8_t byte;
     if (parent_->available() && parent_->read_byte(&byte) == true) {
       switch (rx_state) {
@@ -113,7 +163,13 @@ void BusT4Component::rxTask() {
             // Both checksums valid - accept packet
             ESP_LOGD(TAG, "Received packet: %s (%d bytes)",
                      format_hex_pretty(packet.data, packet.size).c_str(), packet.size);
-            xQueueSend(rxQueue_, &packet, portMAX_DELAY);
+            
+            // Send to queue with timeout instead of portMAX_DELAY
+            if (rxQueue_ != nullptr) {
+              if (!xQueueSend(rxQueue_, &packet, pdMS_TO_TICKS(100))) {
+                ESP_LOGW(TAG, "RX queue full, dropping packet");
+              }
+            }
           } else {
             ESP_LOGW(TAG, "Trailing size mismatch: expected 0x%02X, got 0x%02X", expected_size, byte);
           }
@@ -132,7 +188,15 @@ void BusT4Component::txTask() {
   TickType_t last_tx_time = 0;
   const TickType_t TX_MIN_INTERVAL = pdMS_TO_TICKS(100);  // Minimum 100ms between transmissions
 
+  ESP_LOGI(TAG, "TX task started");
+
   for (;;) {
+    // Safety check: ensure parent and queue exist
+    if (!parent_ || txQueue_ == nullptr) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+
     T4Packet packet;
 
     // Wait for packet with timeout (allows checking for queue items periodically)
@@ -163,6 +227,11 @@ void BusT4Component::txTask() {
 void BusT4Component::write_raw(const uint8_t *data, size_t len) {
   // Send raw bytes directly to UART with break prefix
   // Used for debugging/testing with user-provided hex commands
+  if (!parent_) {
+    ESP_LOGW(TAG, "Parent UART device not available");
+    return;
+  }
+
   parent_->write_byte(T4_BREAK);
   parent_->write_array(data, len);
   parent_->flush();
