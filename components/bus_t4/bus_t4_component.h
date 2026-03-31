@@ -21,9 +21,27 @@ class BusT4Component final : public Component, public uart::UARTDevice {
   void loop() override;
   void dump_config() override;
 
-  bool read(T4Packet *packet, TickType_t xTicksToWait) { return xQueueReceive(rxQueue_, packet, xTicksToWait); }
+  // Read from queue - WITH SAFETY CHECKS
+  bool read(T4Packet *packet, TickType_t xTicksToWait) {
+    if (!packet) {
+      return false;
+    }
+    if (rxQueue_ == nullptr) {
+      return false;
+    }
+    return xQueueReceive(rxQueue_, packet, xTicksToWait);
+  }
 
-  bool write(T4Packet *packet, TickType_t xTicksToWait) { return xQueueSend(txQueue_, packet, xTicksToWait); }
+  // Write to queue - WITH SAFETY CHECKS
+  bool write(T4Packet *packet, TickType_t xTicksToWait) {
+    if (!packet) {
+      return false;
+    }
+    if (txQueue_ == nullptr) {
+      return false;
+    }
+    return xQueueSend(txQueue_, packet, xTicksToWait);
+  }
 
   // Send raw bytes directly to UART (for debugging/testing)
   void write_raw(const uint8_t *data, size_t len);
@@ -36,7 +54,11 @@ class BusT4Component final : public Component, public uart::UARTDevice {
   T4Source get_address() const { return address_; }
 
   // Register a device to receive packet callbacks
-  void register_device(BusT4Device *device) { devices_.push_back(device); }
+  void register_device(BusT4Device *device) { 
+    if (device) {
+      devices_.push_back(device);
+    }
+  }
 
  private:
   void rxTask();
