@@ -8,22 +8,38 @@
 
 namespace esphome::bus_t4 {
 
+static const char *TAG_DEVICE = "bus_t4_device";
+
 class BusT4Device {
  public:
   BusT4Device() = default;
   explicit BusT4Device(BusT4Component *parent) : parent_(parent) {}
 
   bool read(T4Packet *packet, TickType_t xTicksToWait) {
+    if (!parent_) {
+      ESP_LOGW(TAG_DEVICE, "read: parent_ is NULL");
+      return false;
+    }
     return parent_->read(packet, xTicksToWait);
   }
 
   bool write(T4Packet *packet, TickType_t xTicksToWait) {
+    if (!parent_) {
+      ESP_LOGW(TAG_DEVICE, "write: parent_ is NULL");
+      return false;
+    }
+    if (!packet) {
+      ESP_LOGW(TAG_DEVICE, "write: packet is NULL");
+      return false;
+    }
     return parent_->write(packet, xTicksToWait);
   }
 
   void set_parent(BusT4Component *parent) {
     this->parent_ = parent;
-    parent->register_device(this);
+    if (parent) {
+      parent->register_device(this);
+    }
   }
 
   // Send a DEP control command (open/close/stop etc)
