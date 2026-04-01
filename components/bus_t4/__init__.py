@@ -25,7 +25,7 @@ FINAL_VALIDATE_SCHEMA = uart.final_validate_device_schema(
     "bus_t4_uart",
     require_tx=True,
     require_rx=True,
-    baud_rate=9600,
+    baud_rate=19200,
     data_bits=8,
     parity="NONE",
     stop_bits=1,
