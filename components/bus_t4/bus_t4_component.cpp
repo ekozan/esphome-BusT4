@@ -66,6 +66,8 @@ void BusT4Component::setup() {
   // Cache the UART port number for fast baud rate changes during break signal.
   // uart_set_baudrate() is a lightweight hardware register write, much faster
   // than ESPHome's load_settings() which reinstalls the entire UART driver.
+  // Note: On ESP-IDF, the UARTComponent is always IDFUARTComponent, so the
+  // static_cast is safe under the USE_ESP_IDF guard.
   if (parent_) {
     auto *idf_uart = static_cast<uart::IDFUARTComponent *>(parent_);
     uart_num_ = static_cast<uart_port_t>(idf_uart->get_hw_serial_number());
@@ -265,16 +267,25 @@ void BusT4Component::send_break() {
 
 #ifdef USE_ESP_IDF
   // Fast path: use ESP-IDF uart_set_baudrate() which is a lightweight hardware
-  // register write. This does NOT reinstall the UART driver, so it's safe to call
-  // while the RX task is running on the same UART.
-  uint32_t work_baud = parent_->get_baud_rate();
-  uart_set_baudrate(uart_num_, T4_BAUD_BREAK);
-  parent_->write_byte(T4_BREAK);
-  parent_->flush();
-  // Small delay to ensure the break byte is fully transmitted before restoring
-  // the baud rate, matching the reference implementation's delayMicroseconds(90).
-  esp_rom_delay_us(100);
-  uart_set_baudrate(uart_num_, work_baud);
+  // register write. This does NOT reinstall the UART driver.
+  // Note on RX safety: BusT4 is a half-duplex bus, so no device should be
+  // transmitting while we are. The brief baud rate change (~1ms) won't affect
+  // the RX task because the RX state machine already discards non-SYNC bytes.
+  if (uart_num_ < UART_NUM_MAX) {
+    uint32_t work_baud = parent_->get_baud_rate();
+    uart_set_baudrate(uart_num_, T4_BAUD_BREAK);
+    parent_->write_byte(T4_BREAK);
+    parent_->flush();
+    // Small delay to ensure the break byte is fully transmitted before restoring
+    // the baud rate, matching the reference implementation's delayMicroseconds(90).
+    esp_rom_delay_us(100);
+    uart_set_baudrate(uart_num_, work_baud);
+  } else {
+    // UART port not cached (setup issue) — fall back to simple break
+    ESP_LOGW(TAG, "UART port not cached, using simple break (may be too short)");
+    parent_->write_byte(T4_BREAK);
+    parent_->flush();
+  }
 #else
   // Fallback for non-IDF platforms: send break byte at normal speed.
   // This produces a shorter break (~520µs) which may not work with all controllers.

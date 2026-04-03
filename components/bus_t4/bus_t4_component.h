@@ -88,8 +88,9 @@ class BusT4Component final : public Component, public uart::UARTDevice {
   std::vector<BusT4Device *> devices_;
 
 #ifdef USE_ESP_IDF
-  // Cached UART port number for direct baud rate changes (lightweight register write)
-  uart_port_t uart_num_ = UART_NUM_1;
+  // Cached UART port number for direct baud rate changes (lightweight register write).
+  // Initialized to UART_NUM_MAX (invalid) — must be set from parent during setup().
+  uart_port_t uart_num_ = UART_NUM_MAX;
 #endif
 };
 
