@@ -103,6 +103,7 @@ void BusT4Component::loop() {
 void BusT4Component::dump_config() {
   ESP_LOGCONFIG(TAG, "BusT4:");
   ESP_LOGCONFIG(TAG, "  Address: 0x%02X%02X", address_.address, address_.endpoint);
+  ESP_LOGCONFIG(TAG, "  Startup delay: %dms", startup_delay_);
   ESP_LOGCONFIG(TAG, "  RX Queue: %s", rxQueue_ != nullptr ? "OK" : "FAILED");
   ESP_LOGCONFIG(TAG, "  TX Queue: %s", txQueue_ != nullptr ? "OK" : "FAILED");
   ESP_LOGCONFIG(TAG, "  RX Task: %s", rxTask_ != nullptr ? "RUNNING" : "STOPPED");
@@ -110,6 +111,13 @@ void BusT4Component::dump_config() {
 }
 
 void BusT4Component::rxTask() {
+  // Wait for UART bus to stabilize before receiving
+  if (startup_delay_ > 0) {
+    ESP_LOGI(TAG, "RX: waiting %dms for UART bus to stabilize...", startup_delay_);
+    vTaskDelay(pdMS_TO_TICKS(startup_delay_));
+    ESP_LOGI(TAG, "RX: startup delay complete, receiving enabled");
+  }
+
   T4Packet packet;
   uint8_t expected_size = 0;
   // Protocol format: [BREAK] SYNC SIZE DATA[N] SIZE
@@ -206,6 +214,13 @@ void BusT4Component::rxTask() {
 }
 
 void BusT4Component::txTask() {
+  // Wait for UART bus to stabilize before transmitting
+  if (startup_delay_ > 0) {
+    ESP_LOGI(TAG, "TX: waiting %dms for UART bus to stabilize...", startup_delay_);
+    vTaskDelay(pdMS_TO_TICKS(startup_delay_));
+    ESP_LOGI(TAG, "TX: startup delay complete, transmission enabled");
+  }
+
   TickType_t last_tx_time = 0;
   const TickType_t TX_MIN_INTERVAL = pdMS_TO_TICKS(100);  // Minimum 100ms between transmissions
 

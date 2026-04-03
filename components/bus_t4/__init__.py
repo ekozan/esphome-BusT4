@@ -11,11 +11,13 @@ bus_t4_ns = cg.esphome_ns.namespace('bus_t4')
 BusT4Component = bus_t4_ns.class_('BusT4Component', cg.Component, uart.UARTDevice)
 
 CONF_BUS_T4_ID = 'bus_t4_id'
+CONF_STARTUP_DELAY = 'startup_delay'
 
 CONFIG_SCHEMA = cv.All(
     cv.Schema({
         cv.GenerateID(): cv.declare_id(BusT4Component),
-        cv.Optional(CONF_ADDRESS, default=0x5090): cv.hex_uint16_t,
+        cv.Optional(CONF_ADDRESS, default=0x0066): cv.hex_uint16_t,
+        cv.Optional(CONF_STARTUP_DELAY, default='5s'): cv.positive_time_period_milliseconds,
     })
     .extend(uart.UART_DEVICE_SCHEMA)
     .extend(cv.COMPONENT_SCHEMA)
@@ -37,3 +39,4 @@ async def to_code(config):
     await uart.register_uart_device(var, config)
 
     cg.add(var.set_address(config[CONF_ADDRESS]))
+    cg.add(var.set_startup_delay(config[CONF_STARTUP_DELAY]))
