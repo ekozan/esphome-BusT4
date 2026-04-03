@@ -6,9 +6,17 @@
 
 #include "t4_packet.h"
 
+#ifdef USE_ESP_IDF
+#include <esp_rom_sys.h>
+#endif
+
 namespace esphome::bus_t4 {
 
 static const char *TAG = "bus_t4";
+
+// BusT4 break signal baud rate: sending 0x00 at this speed produces a ~1ms low pulse.
+// Reference: pruwait/Nice_BusT4 uses 9200 for a 19200 baud bus.
+static constexpr uint32_t T4_BAUD_BREAK = 9200;
 
 void BusT4Component::setup() {
   // Create RX queue first with null check
@@ -53,6 +61,17 @@ void BusT4Component::setup() {
     return;
   }
   ESP_LOGD(TAG, "TX task created");
+
+#ifdef USE_ESP_IDF
+  // Cache the UART port number for fast baud rate changes during break signal.
+  // uart_set_baudrate() is a lightweight hardware register write, much faster
+  // than ESPHome's load_settings() which reinstalls the entire UART driver.
+  if (parent_) {
+    auto *idf_uart = static_cast<uart::IDFUARTComponent *>(parent_);
+    uart_num_ = static_cast<uart_port_t>(idf_uart->get_hw_serial_number());
+    ESP_LOGD(TAG, "Cached UART port %d for break signal generation", uart_num_);
+  }
+#endif
 
   ESP_LOGI(TAG, "BusT4 component setup complete");
 }
@@ -209,7 +228,7 @@ void BusT4Component::txTask() {
       }
 
       ESP_LOGD(TAG, "Sending packet: %s", format_hex_pretty(packet.data, packet.size).c_str());
-      parent_->write_byte(T4_BREAK);
+      send_break();
       parent_->write_byte(T4_SYNC);
       parent_->write_byte(packet.size);
       parent_->write_array(packet.data, packet.size);
@@ -232,9 +251,36 @@ void BusT4Component::write_raw(const uint8_t *data, size_t len) {
     return;
   }
 
-  parent_->write_byte(T4_BREAK);
+  send_break();
   parent_->write_array(data, len);
   parent_->flush();
+}
+
+void BusT4Component::send_break() {
+  // BusT4 protocol requires a break signal (~1ms low pulse) before each packet.
+  // This is achieved by sending 0x00 at a lower baud rate (9200 instead of 19200),
+  // which produces a longer low-level signal on the bus.
+  // Reference: pruwait/Nice_BusT4 send_array_cmd() implementation.
+  if (!parent_) return;
+
+#ifdef USE_ESP_IDF
+  // Fast path: use ESP-IDF uart_set_baudrate() which is a lightweight hardware
+  // register write. This does NOT reinstall the UART driver, so it's safe to call
+  // while the RX task is running on the same UART.
+  uint32_t work_baud = parent_->get_baud_rate();
+  uart_set_baudrate(uart_num_, T4_BAUD_BREAK);
+  parent_->write_byte(T4_BREAK);
+  parent_->flush();
+  // Small delay to ensure the break byte is fully transmitted before restoring
+  // the baud rate, matching the reference implementation's delayMicroseconds(90).
+  esp_rom_delay_us(100);
+  uart_set_baudrate(uart_num_, work_baud);
+#else
+  // Fallback for non-IDF platforms: send break byte at normal speed.
+  // This produces a shorter break (~520µs) which may not work with all controllers.
+  parent_->write_byte(T4_BREAK);
+  parent_->flush();
+#endif
 }
 
 } // namespace esphome::bus_t4
