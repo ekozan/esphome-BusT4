@@ -41,6 +41,8 @@ uart:
 
 bus_t4:
   id: bus
+  # address: 0x0066  # Gateway address on BusT4 network (default: 0x0066, matching OView convention)
+  # startup_delay: 5s  # Delay before UART bus starts (default: 5s, allows bus to stabilize)
 
 cover:
   - platform: bus_t4

@@ -791,9 +791,11 @@ void BusT4Cover::init_device() {
   switch (init_step_) {
     case 0: {
       // Step 0: Discover devices on the bus
+      // Broadcast to series 0 (default network), all addresses
+      // Reference: gen_inf_cmd(0x00, 0xff, FOR_ALL, WHO, GET, 0x00)
       discovery_attempts_++;
       ESP_LOGI(TAG, "Initializing device - discovering... (attempt %d)", discovery_attempts_);
-      T4Source broadcast{0xFF, 0xFF};
+      T4Source broadcast{0x00, 0xFF};
       uint8_t who_msg[5] = { FOR_ALL, INF_WHO, REQ_GET, 0x00, 0x00 };
       T4Packet who_packet(broadcast, parent_->get_address(), DMP, who_msg, sizeof(who_msg));
       write(&who_packet, 0);

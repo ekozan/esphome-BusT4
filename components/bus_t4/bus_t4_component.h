@@ -56,6 +56,8 @@ class BusT4Component final : public Component, public uart::UARTDevice {
     address_.endpoint = static_cast<uint8_t>(address & 0xFF);
   }
 
+  void set_startup_delay(uint32_t delay_ms) { startup_delay_ = delay_ms; }
+
   T4Source get_address() const { return address_; }
 
   // Register a device to receive packet callbacks
@@ -86,6 +88,10 @@ class BusT4Component final : public Component, public uart::UARTDevice {
   EventGroupHandle_t requestEvent_ = nullptr;
   
   std::vector<BusT4Device *> devices_;
+
+  // Configurable startup delay: wait before UART TX/RX tasks begin processing.
+  // Allows the bus to stabilize after power-on. Default 5 seconds.
+  uint32_t startup_delay_{5000};
 
 #ifdef USE_ESP_IDF
   // Cached UART port number for direct baud rate changes (lightweight register write).
