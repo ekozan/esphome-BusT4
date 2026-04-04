@@ -8,6 +8,7 @@
 
 #ifdef USE_ESP_IDF
 #include <esp_rom_sys.h>
+#include <soc/rtc_cntl_reg.h>
 #endif
 
 namespace esphome::bus_t4 {
@@ -19,6 +20,14 @@ static const char *TAG = "bus_t4";
 static constexpr uint32_t T4_BAUD_BREAK = 9200;
 
 void BusT4Component::setup() {
+#ifdef USE_ESP_IDF
+  // Suppress ESP32 brownout detector serial output at startup.
+  // A brownout reset message ("Brownout detector was triggered") can appear on
+  // the serial bus and be mistaken for valid BusT4 traffic.
+  REG_CLR_BIT(RTC_CNTL_BROWN_OUT_REG, RTC_CNTL_BROWN_OUT_ENA);
+  ESP_LOGD(TAG, "Brownout detector disabled");
+#endif
+
   // Create RX queue first with null check
   rxQueue_ = xQueueCreate(32, sizeof(T4Packet));
   if (rxQueue_ == nullptr) {
@@ -117,6 +126,26 @@ void BusT4Component::rxTask() {
     vTaskDelay(pdMS_TO_TICKS(startup_delay_));
     ESP_LOGI(TAG, "RX: startup delay complete, receiving enabled");
   }
+
+  // Flush any parasitic bytes accumulated during startup (boot noise, VP230 echo, etc.)
+#ifdef USE_ESP_IDF
+  if (uart_num_ < UART_NUM_MAX) {
+    uart_flush_input(uart_num_);
+    ESP_LOGD(TAG, "RX: UART input buffer flushed");
+  }
+#else
+  {
+    uint8_t discard;
+    uint32_t flushed = 0;
+    while (parent_ && parent_->available()) {
+      parent_->read_byte(&discard);
+      flushed++;
+    }
+    if (flushed > 0) {
+      ESP_LOGD(TAG, "RX: flushed %u parasitic byte(s) from startup", flushed);
+    }
+  }
+#endif
 
   T4Packet packet;
   uint8_t expected_size = 0;
