@@ -8,6 +8,7 @@
 
 #ifdef USE_ESP_IDF
 #include <esp_rom_sys.h>
+#include <soc/rtc_cntl_reg.h>
 #endif
 
 namespace esphome::bus_t4 {
@@ -19,6 +20,14 @@ static const char *TAG = "bus_t4";
 static constexpr uint32_t T4_BAUD_BREAK = 9200;
 
 void BusT4Component::setup() {
+#ifdef USE_ESP_IDF
+  // Suppress ESP32 brownout detector serial output at startup.
+  // A brownout reset message ("Brownout detector was triggered") can appear on
+  // the serial bus and be mistaken for valid BusT4 traffic.
+  REG_CLR_BIT(RTC_CNTL_BROWN_OUT_REG, RTC_CNTL_BROWN_OUT_ENA);
+  ESP_LOGD(TAG, "Brownout detector disabled");
+#endif
+
   // Create RX queue first with null check
   rxQueue_ = xQueueCreate(32, sizeof(T4Packet));
   if (rxQueue_ == nullptr) {
